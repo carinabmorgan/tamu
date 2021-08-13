@@ -1,0 +1,297 @@
+---
+title: "Stat684 Project: Understanding & Predicting Wellbeing "
+author: "Carina Morgan"
+date: "7/14/2021"
+output:
+  html_document: 
+    code_folding: hide
+    number_sections: false
+    theme: flatly
+    highlight: kate
+    df_print: kable
+    self_contained: true
+    keep_md: true
+    toc: true
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+The goal of this project is to explore lifestyle and demographic factors that affect overall health and wellbeing among adults. Data was collected through a survey that asked participants about specific health behaviors and habits. Our society is struggling with a big downturn in mental health and overall physical and emotional wellbeing, especially as we slowly start coming out of the pandemic from Covid-19. It is vital for us to learn how to optimize our health and wellbeing to support mental health. We are in a time where people in the US are reevaluating their work and life habits, reprioritizing how they spend their time, and putting a greater emphasis on leading a life that allows them to feel healthy and fulfilled. Learning more about what habits affect wellbeing can improve our quality of life and aid people who are in this in-between phase of trying to figure out what they should do to have a happier, healthier life. 
+
+Each participant had an overall work life balance score calculated based on a series of categorical questions (on either 1-2, 1-5, or 1-10 scales) that serves as our supervisor (scores range from 480-820). A score of 480 is the lowest well-being score, while 820 is the highest. 
+
+There were 15,977 responses to the survey, and 22 predictors were created from the survey questions. Our main research question is this: what are the main healthy habits or behaviors associated with greater overall wellbeing? Can we predict how balanced someone will feel their life is based on their relationship with these health habits/behaviors? 
+
+The link to the survey can be found here: http://www.authentic-happiness.com/your-life-satisfaction-score
+
+
+The predictors included were the following: 
+*How many fruits and vegetables do you eat every day? (1-5 scale)
+*How much stress do you typically experience per day? (1-5 scale)
+*How many new places do you visit in a year? (0-10 scale)
+*How many people are very close to you? (0-10 scale)
+*How many people do you help achieve a better life? (0-10 scale)
+*With how many people do you interact with during a typical day? (0-10 scale)
+*How many achievements are you proud of? (0-10 scale)
+*How many times in a year do you donate time or money to good causes? (0-5 scale)
+*BMI range (not overweight or overweight) (binary)
+*How well do you complete your weekly to-do lists? (0-10 scale)
+*How many hours do you experience 'flow' in a typical day? (0-10 scale)
+*How many steps (thousands) do you typically walk per day? (0-10 scale)
+*For how many years ahead is your life vision clear? (0-10 scale)
+*How long do you typically sleep? (1-10 scale)
+*How many days of vacation do you typically lose every year? (0-10 scale)
+*How often do you shout or sulk at somebody in a typical day? (0-10 scale)
+*How sufficient is your income to cover basic life expenses? (binary)
+*How many recognitions have you received in your life? (0-10 scale)
+*How many hours do you spend every day doing what you are passionate about? (0-10 scale)
+*In a typical week, how many times do you have the chance to think about yourself? (0-10 scale)
+*Age group (categorical) 
+*Gender (binary)
+
+
+# Study Design 
+
+My analysis was conducted using RStudio. Regression analysis seems the most logical given the numeric response variable; however, the survey questions all contain categorical answers, so in order to do this, I will need to create dummy variables for all of the categories (meaning 1 if a person chose that option and 0 if they did not, for each question) and ensure that the categories are independent. I will then train an elastic net regression model to see how that does with prediction, and a glm model for inference purposes. 
+
+# Exploratory Data Analysis & Data Prep
+
+First, let's visualize our data: 
+
+```{r}
+#inspect data
+health = read.csv("/Users/carinaparikh/desktop/wellbeing_and_lifestyle_data.csv")
+library(car)
+
+#inspect variables
+  str(health)
+
+#check that supervisor is normally distributed
+  hist(health$WORK_LIFE_BALANCE_SCORE, main = 'Work-Life Balance Score Histogram', xlab = 'Score')
+
+ #need to take sample of 5000 for shapiro wilks test
+  sampleInd = sample(1:nrow(health), 5000, replace = F)
+  sample = health$WORK_LIFE_BALANCE_SCORE[sampleInd]
+  shapiro.test(sample) #says not a good fit, but can use CLT
+  
+#histograms of predictors
+X = health[,2:21]
+for (i in 1:20) {
+  X[,i] = as.numeric(X[,i])
+}
+
+  par(mfrow=c(3,4))
+  for (i in 1:20) {
+    hist(X[,i], breaks = c(seq(0,10,1)), main = (names(X)[i]))
+  }
+
+```
+
+The supervisor appears normally distributed, which is great. The Shapiro Wilks test indicates that it's not the best fit, however with the amount of data in the set, we can apply the Central Limit Theorem and assume normality. 
+
+Looking at the individual predictors, there is likely some response bias in the survey answers. We see a lot of people indicating the extremes for number of places visited, core circle strength, time spent supporting others, social network, daily steps, daily shouting, personal awards, and weekly meditation. A few things come to mind here - selection bias in the sense that people who are already strong in those habits are more likely to complete the survey, and response bias in that people who are taking the survey want to seem more put-together and healthier with their habits. We'll keep these in mind as we conduct our analyses. 
+
+The next thing we want to do is split our data into training and testing sets, using 80% of the data for training and 20% for testing. This allows us to ensure that our model is not biased and can correctly predict the wellbeing score with data it has never seen before. We then check for missing values, transform any variables necessary, and look at some basic plots of our data. All analyses are done using R Studio. 
+
+```{r, message =FALSE, warning =FALSE}
+
+#split into train and test data sets and remove timestamp as a predictor
+  library(caret) #for data partition
+  library(dplyr) #for piping
+  set.seed(1958)
+  trainIndex = createDataPartition(health$WORK_LIFE_BALANCE_SCORE, p = 0.8, list = F) %>% as.vector(.)
+  
+  n = nrow(health)
+  testIndex = (1:n)[-trainIndex]
+
+
+  health$role = rep("train", n)
+  health$role[testIndex] = "test"
+  
+  XTrain = health[health$role=='train',-c(1,24)]
+  YTrain = health[health$role=='train', 24]
+
+  XTest = health[health$role=='test',-c(1,24)]
+  YTest = health[health$role=='test', 24]
+  
+  #weird value in one cell of XTrain for Daily Stress that doesn't match at all, so we'll replace it with the   median stress value, which is 3
+      #table(XTrain$DAILY_STRESS)
+      ind = which(XTrain$DAILY_STRESS=='1/1/00')
+      Xnum = na.omit(as.numeric(XTrain$DAILY_STRESS))
+        #median(Xnum), median = 3
+  XTrain$DAILY_STRESS[ind]=3
+  
+#check for missing variables
+  #anyNA(XTrain) #since true, we need to investigate further
+  
+  threshMissingness = 0.33
+
+  trainMissing = rep(0,ncol(XTrain))
+  for( i in 1:ncol(XTrain)) {
+    trainMissing[i] = sum(is.na(XTrain[,i]))
+  }
+
+  #percentMissing = round(trainMissing/n,4)
+  #which(percentMissing > .33) #no variables with a lot of missing data, actually just one missing value 
+    #medianImpute = median(na.omit(XTrain[,2])) 
+    #x = which(is.na(XTrain[,2]) == 'TRUE')
+    #XTrain[x,2] = medianImpute
+  
+  #remove role
+  XTrain = XTrain[,-23]
+
+#check for correlation 
+  library(pspearman)
+pvals = matrix(0,ncol(XTrain),ncol(XTrain))
+for (i in 1:ncol(XTrain)) {
+  for(j in 1:ncol(XTrain)) {
+    tmp = spearman.test(XTrain[,i], XTrain[,j])
+    pvals[i,j] = tmp$p.value
+  }
+}
+#turn categorical variables into dummy vars
+  for(i in 1:22) {
+    XTrain[,i] = as.factor(XTrain[,i])
+  }
+  dummyModel = dummyVars(~ ., data = XTrain, fullRank = TRUE)
+  XTrainDummy   = as.data.frame(predict(dummyModel, XTrain))
+  XTrainMod = model.matrix(~., data = XTrainDummy)
+#prep test data the same way we cleaned up training data
+  
+  XTest = XTest[,-23]
+  for(i in 1:22) {
+    XTest[,i] = as.factor(XTest[,i])
+  }
+  dummyModel2 = dummyVars(~ ., data = XTest, fullRank = TRUE)
+  XTestDummy   = as.data.frame(predict(dummyModel2, XTest))
+  XTestMod = model.matrix(~., data = XTestDummy)
+```
+
+There was only one missing variable, and because there was only one, I used the median value of that category to impute the missing variable. Since I have ordinal data, I checked correlation with spearman's rho (if it was nominal I would use chi square tests). There did not seem to be any categorical variables highly correlated with one another. 
+
+# Methods
+
+## Predictive Regression Model 
+There are a few approaches I want to take to investigate the research question. I will start by training a regression model using elastic net. The goal of the predictive model is to make calculating well-being score easier when given survey answers. 
+
+```{r}
+library(glmnet) #used for elastic net regression model training
+library(vip)
+
+K    = 15
+trainControl = trainControl(method = "cv", number = K)
+elasticOut = train(x = XTrainMod, y = YTrain,
+                   method = "glmnet", trControl = trainControl)
+
+glmnetOut      = glmnet(x = XTrainMod, y = YTrain, alpha = elasticOut$bestTune$alpha)
+betaHat_glmnet = coef(glmnetOut, s = elasticOut$bestTune$lambda)
+
+YhatTrain_glmnet = predict(glmnetOut, XTrainMod,  s = elasticOut$bestTune$lambda)
+plot(YhatTrain_glmnet, YTrain - YhatTrain_glmnet, 
+     xlab = 'Training predictions', ylab = 'Residuals') ## linear pattern to residuals 
+
+trainMSE = mean((YTrain-YhatTrain_glmnet)^2)
+trainRMSE = sqrt(trainMSE) #low, which is good
+
+importantFeatures = vip(glmnetOut,  num_features = 20, bar = FALSE)
+plot(importantFeatures)
+
+
+```
+
+There appears to be an upper boundary for the residuals in the residual plot. However, the RMSE is `r trainRMSE`, which is low and a good sign. It means that on average we are wrong by 1.35 units, which is really quite accurate on the scale of our wellbeing scores. My best educated guess at why the residual plot is a little odd is that a lot of the variables do go hand-in-hand to some extent, even though the correlation tests came back ok. For example, someone who experiences flow a lot in their day is probably less likely to experience a lot of shouting. 
+
+We can also see a plot of the most important features in the model, which I will detail more in the results. 
+
+After securing a decent model, we want to assess it with our testing data set.
+
+```{r}
+
+YhatTest_glmnet = predict(glmnetOut, XTestMod, s = elasticOut$bestTune$lambda)
+testMSE = mean((YTest - YhatTest_glmnet)^2)
+testRMSE = sqrt(testMSE)
+```
+
+We have a low RMSE of `r testRMSE`, which means we have a fairly good model for predicting wellbeing. It makes sense that we'd have a really low test error, because what we are really doing is automating what was done manually, taking the survey answers and calculating the wellbeing scores. 
+
+## Inferential Generalized Linear Model
+
+Now, I'll run a more inferential glm to look at the significance of features in contribution to wellbeing. This is a more important component of the analysis, because we want to learn which features are MOST important in the overall score. 
+
+```{r}
+X = health[,-c(1,24,25)]
+
+X = health[,-c(1,24,25)]
+for(i in 1:ncol(X)){
+   X[,i] = as.factor(X[,i])
+}
+
+mod = glm(health$WORK_LIFE_BALANCE_SCORE ~  X$FRUITS_VEGGIES + X$DAILY_STRESS + X$PLACES_VISITED + X$CORE_CIRCLE + X$SUPPORTING_OTHERS + X$SOCIAL_NETWORK + X$ACHIEVEMENT + X$DONATION  + X$BMI_RANGE + X$TODO_COMPLETED + X$FLOW + X$DAILY_STEPS + X$LIVE_VISION + X$SLEEP_HOURS + X$LOST_VACATION + X$DAILY_SHOUTING + X$SUFFICIENT_INCOME + X$PERSONAL_AWARDS + X$TIME_FOR_PASSION + X$WEEKLY_MEDITATION + X$AGE + X$GENDER)
+
+library(boot)
+par(mfrow=c(2,2))
+boot::glm.diag.plots(mod)
+
+```
+
+Due to the number of levels of each factor, I will not spend time going through all of the coefficients - the goal of this inferential model is to focus on the big picture. 
+
+The pearson residual plot looks fine, like a random scatter. However, I can see some non-normality in the residuals.
+
+## Odds & Odds Ratios
+
+Lastly, since I have categorical data, I am interested in looking at some odds and odds ratios. For the purpose of this component of the analysis, I'm going to separate the well-being scores into high and low scores. Since the scores are approximately normal, and the histogram shows symmetry, the mean and median are about the same, so we will take the median threshold of 668 as the cutoff. A score higher than 668 will be considered an above-average wellbeing, and a score lower than 668 will be considered below-average. We want to explore the odds of someone having an above-average wellbeing score based on the predictors gender, BMI, age category, and sufficient income. 
+
+```{r}
+YBinary = ifelse(health$WORK_LIFE_BALANCE_SCORE >= 668, 1, 0)
+
+logisticMod = glm(YBinary ~ as.factor(health$GENDER)+ as.factor(health$BMI_RANGE) + as.factor(health$AGE) + as.factor(health$SUFFICIENT_INCOME), family = binomial(link='logit'))
+
+summary(logisticMod)
+```
+
+To check this model, we can look at the deviance ratio and see that it is ~1, which indicates a good model fit. The final model fit is as follows: 
+
+log(score) = -0.94 - 0.16(1 if male, 0 if female) - 1.03(1 if BMI > 25, 0 otherwise) + 
+    0.24(1 if age 36-50, 0 otherwise) + .63(1 if age 51+, 0 otherwise) + 0.11(1 if age <20, 0 otherwise) +
+    1.60(1 if sufficient income, 0 otherwise)
+    
+The coefficients for these factors indicate an increase or decrease in the odds of having a high well-being score, holding all other variables constant. For example, this model shows that the odds of being a male with a high wellbeing score are $e^{-.94}$ = 0.4 times the odds of being a female with a high wellbeing score. Therefore, we can conclude that the odds of a high wellbeing score are greater for females than males. 
+
+The coefficient for BMI is -1.03, meaning that the odds of a high wellbeing score are $e^{-1.03}$ = 0.4 for someone with a BMI > 25 compared to someone with a BMI less than or equal to 25. 
+
+For age, based on the coefficients, the odds of a high wellbeing score are highest in the 51+ age category. 
+
+Lastly, the odds of a high wellbeing score for people who have a sufficient income to meet their needs is $e^{1.6}$ = 5 times the odds of a high wellbeing score for people who's income does not support their needs. 
+    
+
+# Results
+
+We were able to successfully train a regression model that helps us to predict wellbeing score based on the features from the survey. We also fit a general linear model to make inferences on which features contribute most to wellbeing score. 
+
+First, the predictive model results: From the plot of important features, we can see that the most important predictor of well-being score from the survey is having a sufficient income for living a comfortable life. This category was binary, 1 being insufficient and 2 being sufficient. Other important features were having a lot of time for passions, donating time/services to others regularly, having a BMI in the healthy range, not losing vacation days, a large amount of "flow" in the day, having a solid life vision, a low amount of daily shouting, high feelings of achievement, walking 10,000 steps per day, supporting others often, and eating 5+ servings of fruits and vegetables per day. While none of these are surprising, it's cool to see these things confirmed. 
+
+For the inferential model, the only variables not statistically significant are age and gender. This is refreshing, because it supports the idea that as a society we have made great strides in both improving gender equality and learning how to create a life of enjoyment at younger ages. For reading ease, I will show two lists, one with variables that decrease wellbeing score and one with variables that increase wellbeing score. 
+
+Decrease Wellbeing: daily stress, unhealthy BMI, lost vacation time, & daily shouting amount. 
+
+Increase Wellbeing: weekly meditation, sufficient time for passions, personal awards earned, sufficient income for living expenses, sleep, clear life vision, daily steps, daily flow, completing to-do lists, donating time/energy, personal achievements, a strong social network, time spent supporting others, having a core circle of friends, traveling to new places, and fruit/vegetable consumption. 
+
+Moving onto some of the categorical analysis, We found that the greatest change in odds of a high wellbeing score came from whether or not people had an income that sufficiently met their needs. Being a female increased the odds of a high wellbeing score, as well as being 51+ in age and having a BMI in the "healthy" range. The categorical component of this analysis is interesting because it shows more demographic differences, while the linear model mostly covered life habits and qualities. 
+
+# Conclusions
+
+Our goal was to explore the various factors that improved or reduced overall wellbeing so that we can better understand how specific habits contribute to our wellbeing, better predict someone's wellbeing based on those factors, and understand how certain demographic features play into wellbeing. 
+
+On the demographic side, we found that being female, being over 51 years old, having a sufficient income for basic life needs, and having a healthy BMI range contributed to improved wellbeing scores. Contextually, what we can take from this is that some of the habits also investigated in this survey may be more important for people who are male, under 51 years old, have an insufficient income for their needs, and/or not in a healthy BMI range to have a better overall wellbeing. 
+
+We created a predictive model to select the most important features in predicting overall wellbeing, and found that having a sufficient income, time to explore passions, time and energy spent donating to others, being in the healthy BMI category, and using all of one's vacation time contributed most to the prediction of wellbeing score. 
+
+We also fit an inferential linear model to explore the most significant features that contribute to wellbeing, and found that daily stress, unhealthy BMI, lost vacation time, & daily shouting amount decrease wellbeing on average, while weekly meditation, sufficient time for passions, personal awards earned, sufficient income for living expenses, sleep, clear life vision, daily steps, daily flow, completing to-do lists, donating time/energy, personal achievements, a strong social network, time spent supporting others, having a core circle of friends, traveling to new places, and fruit/vegetable consumption increase wellbeing. 
+
+This information can be used for targeted approaches towards helping people improve their wellbeing for those who work with others on creating a happier, healthier life. 

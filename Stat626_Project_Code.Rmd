@@ -1,0 +1,129 @@
+---
+title: "Stat 626 Time Series Project"
+author: "Carina Morgan"
+date: "7/8/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#load libraries
+library(Quandl) #allows us to get bitcoin data
+library(astsa) #for creating time series models
+library(forecast) #forecasting
+library(tidyverse)
+
+```
+
+```{r}
+#import data
+ ## source: https://www.quandl.com/data/BCHAIN/MKPRU-Bitcoin-Market-Price-USD
+  ### value = Average USD market price across major bitcoin exchanges
+  bitcoin = Quandl("BCHAIN/MKPRU")
+  
+  # DATA PREP
+  data =
+    bitcoin %>%
+    filter(Value > 0) %>%
+    arrange(Date)
+  
+  rm(bitcoin)
+
+```
+
+# Project Goal
+
+This project aims to practice time series analysis using a data set of our choice. Our group selected bitcoin data. THe data obtained from the Quandle API contains average USD market prices for bitcoin.
+
+# High Level Findings
+
+
+# Background Information
+
+
+# Data Exploration
+
+I always want to start an analysis by visualizing the data, so I'll create several plots of our time series data. 
+
+```{r}
+data %>%
+  ggplot(aes(x = Date, y = Value))+
+  geom_line(color = "darkblue")+
+  scale_y_continuous(labels = scales::dollar)+
+  ggtitle("Adj Closing Prices for Bitcoin")+
+  ylab("Price")+
+  xlab("Year")
+
+acf1(data$Value, main = "Auto Correlation Function", max.lag = 200)
+acf1(data$Value, main = 'Partial Auto Correlation Function', max.lag = 200, pacf = TRUE)
+
+```
+
+
+From this initial, untransformed plot we can see that bitcoin prices remained realtively flat until 2017, and since then has seen high growth, but with plenty of variability, especially once we hit 2018. 
+The ACF goes down gradually, while the PACF has one highly significant lag and then the rest are very close to 0. 
+
+Because this time series is anything but stationary, I will see what a log transformation does to the data. 
+
+```{r}
+
+data %>%
+  mutate(Value = log(Value)) %>%
+  ggplot(aes(x = Date, y = Value))+ geom_line(color = "darkblue")+
+  ggtitle("Log Transform of Adj Closing Prices")+ ylab("Log(Price)")+
+  xlab("Year")+ geom_smooth(method="lm",color="azure4")
+
+par(mfrow=c(2,1)) 
+qqnorm(data$Value); qqline(data$Value)
+qqnorm(log(data$Value)); qqline(log(data$Value))
+
+TS = ts(data = log(data$Value), start = data$Date[1], frequency = 1)
+Mod = lm(TS ~ time(TS))
+
+par(mfrow=c(2,2))
+plot(x = data$Date,
+     y = TS,
+     type = "l",
+     panel.first = Grid(),
+     main = "Log(Price) with linear trend",
+     ylab = "log(Price)",
+     xlab = "Time")
+abline(Mod, col = "darkblue")
+
+plot(x = data$Date,
+     y = Mod$residuals,
+     type = "l",
+     panel.first = Grid(),
+     main = "Detrended Log(Price) Residuals",
+     ylab = "Residuals",
+     xlab = "Time")
+abline(h = 0, col = "firebrick", lwd = 2)
+
+acf1(Mod$residuals, main = "Residual ACF for Detrended Log(Price)", max.lag = 100)
+
+```
+
+A common practice from what we have learned in class is that to help coerce a nonstationary series into a stationary one, we should try a log transformation and then use differencing. The log transformation above has certainly helped make the data look slightly more linear, but you can see from the QQ plots it is still heavily skewed, so we will next try differencing to see what that does to the series. 
+
+```{r}
+diffLog = diff(log(data$Value))
+par(mfrow=c(1,1))
+tsplot(y = diffLog, x = data$Date[-1], col = 'darkblue', main = 'Differenced Log(Price) of Bitcoin',
+       xlab = 'Year', ylab = '')
+
+par(mfrow=c(2,1))
+acf1(diffLog, main = 'ACF for differenced log data', max.lag = 200)
+acf1(diffLog, main = 'PACF for differenced log data', pacf = TRUE, max.lag = 200)
+
+```
+
+After looking at the differenced data, it appears much more stationary now, though we still see some volatility, this time at the beginning of the series. 
+
+```{r}
+
+
+```
+
